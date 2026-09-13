@@ -54,18 +54,6 @@
 	}
 }
 
-- (void)application:(UIApplication *)application didReceiveRemoteNotification:(NSDictionary *)userInfo fetchCompletionHandler:(void (^)(UIBackgroundFetchResult result))completionHandler {
-	for (GDTAppDelegateServiceProtocol *service in GDTApplicationDelegate.services) {
-		if (![service respondsToSelector:_cmd]) {
-			continue;
-		}
-
-		[service application:application didReceiveRemoteNotification:userInfo fetchCompletionHandler:completionHandler];
-	}
-
-	completionHandler(UIBackgroundFetchResultNoData);
-}
-
 @end
 
 #elif VERSION_MAJOR == 4 && VERSION_MINOR == 4

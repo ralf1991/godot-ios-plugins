@@ -56,6 +56,9 @@ void APNPlugin::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "badge_number"), "set_badge_number", "get_badge_number");
 
 	ADD_SIGNAL(MethodInfo("device_address_changed", PropertyInfo(Variant::STRING, "id")));
+	// Fired when a remote (APNs) notification arrives while the app is
+	// running in the foreground -- see GodotAPNAppDelegate's willPresentNotification
+	ADD_SIGNAL(MethodInfo("remote_notification_received"));
 
 	BIND_ENUM_CONSTANT(PUSH_ALERT);
 	BIND_ENUM_CONSTANT(PUSH_BADGE);
@@ -83,6 +86,10 @@ void APNPlugin::register_push_notifications(PushOptions options) {
 
 void APNPlugin::update_device_token(String token) {
 	emit_signal("device_address_changed", token);
+}
+
+void APNPlugin::notify_remote_notification_received() {
+	emit_signal("remote_notification_received");
 }
 
 void APNPlugin::set_badge_number(int value) {

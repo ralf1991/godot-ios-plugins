@@ -31,7 +31,16 @@
 #import <UIKit/UIKit.h>
 #import <UserNotifications/UserNotifications.h>
 
-@interface GodotAPNAppDelegate : NSObject <UIApplicationDelegate>
+// Godot >= 4.5's GDTApplicationDelegate.addService: requires a
+// GDTAppDelegateServiceProtocol conformer, which is <UIApplicationDelegate,
+// UIWindowSceneDelegate> (drivers/apple_embedded/godot_app_delegate.h) -- the
+// scene-delegate methods are all optional, so declaring conformance without
+// implementing any of them is fine.
+//
+// Also registers itself as a UserNotificationService (godot_user_notification_
+// delegate.h) to implement willPresentNotification -- the only delegate hook
+// that fires while the app is in the FOREGROUND when a remote push arrives
+@interface GodotAPNAppDelegate : NSObject <UIApplicationDelegate, UIWindowSceneDelegate, UNUserNotificationCenterDelegate>
 
 + (instancetype)shared;
 - (void)registerPushNotificationsWithOptions:(UNAuthorizationOptions)options;

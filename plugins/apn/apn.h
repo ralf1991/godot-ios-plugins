@@ -56,6 +56,7 @@ public:
 
 	void register_push_notifications(PushOptions options);
 	void update_device_token(String token);
+	void notify_remote_notification_received();
 
 	void set_badge_number(int value);
 	int get_badge_number();

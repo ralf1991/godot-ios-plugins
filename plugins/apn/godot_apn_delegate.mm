@@ -66,12 +66,43 @@ static APNSInitializer initializer;
 
 - (instancetype)init {
 	self = [super init];
-
-	if (self) {
-		UNUserNotificationCenter.currentNotificationCenter.delegate = [GodotUserNotificationDelegate shared];
-	}
-
 	return self;
+}
+
+// Registers as the UNUserNotificationCenter delegate via a direct
+// UIApplicationDidFinishLaunchingNotification observer, NOT via Godot's own
+// GDTApplicationDelegate addService:/didFinishLaunchingWithOptions:
+// forwarding (godot_app_delegate.mm) -- confirmed on-device (file-based
+// logging, immune to devicectl's console-streaming race) that our
+// application:didFinishLaunchingWithOptions: was NEVER once forwarded to us,
+// most likely a static-initializer ordering issue between this plugin's
+// APNSInitializer and GDTApplicationDelegate's own services array across
+// translation units, which C++ does not guarantee. UIKit's own notification
+// is posted directly by the OS after -didFinishLaunchingWithOptions: returns,
+// independent of Godot's plugin-forwarding machinery entirely (this is the 
+// actual root cause of the system banner never being suppressed while 
+// foregrounded -- willPresentNotification was never once invoked because the 
+// delegate was, in effect, never registered, despite the plain property write 
+// in the previous approach not crashing).
++ (void)load {
+	[[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+													   object:nil
+														queue:nil
+												   usingBlock:^(NSNotification *_Nonnull note) {
+													   UNUserNotificationCenter.currentNotificationCenter.delegate = [GodotUserNotificationDelegate shared];
+													   [GodotUserNotificationDelegate addService:[GodotAPNAppDelegate shared]];
+												   }];
+}
+
+// Only called while the app is in the foreground (see the doc comment on this
+// selector in godot_user_notification_delegate.m) -- a backgrounded/killed app
+// never reaches this, it just shows the system banner.
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification:(UNNotification *)notification withCompletionHandler:(void (^)(UNNotificationPresentationOptions options))completionHandler {
+	APNPlugin *plugin = APNPlugin::get_singleton();
+	if (plugin) {
+		plugin->notify_remote_notification_received();
+	}
+	completionHandler(UNNotificationPresentationOptionNone);
 }
 
 + (instancetype)shared {
