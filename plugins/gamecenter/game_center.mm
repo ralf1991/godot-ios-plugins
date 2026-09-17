@@ -34,6 +34,7 @@
 
 #if VERSION_MAJOR == 4
 #if VERSION_MINOR >= 6
+#import "drivers/apple_embedded/app_delegate_service.h"
 #import "drivers/apple_embedded/godot_app_delegate.h"
 #import "drivers/apple_embedded/godot_view_controller.h"
 #elif VERSION_MINOR >= 5
@@ -63,6 +64,55 @@ typedef PoolRealArray GodotFloatArray;
 GameCenter *GameCenter::instance = NULL;
 GodotGameCenterDelegate *gameCenterDelegate = nil;
 
+// View controller to present Game Center UI from.
+//
+// Godot 4.6+ runs under the SwiftUI app lifecycle: nobody assigns the app
+// delegate's `window`, so `UIApplication.delegate.window.rootViewController`
+// is nil (seen on a fresh install in the iPad simulator: authenticate()
+// returned FAILED every time, the game sat on RECONNECT). Look the window up
+// through the connected scenes instead, fall back to Godot's own view
+// controller, and climb to the top-most presented controller so presenting
+// never targets a controller that is already presenting something.
+static UIViewController *gamecenter_presenting_controller() {
+	UIWindow *window = nil;
+	for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+		if (![scene isKindOfClass:[UIWindowScene class]] || scene.activationState == UISceneActivationStateUnattached || scene.activationState == UISceneActivationStateBackground) {
+			continue;
+		}
+		for (UIWindow *candidate in ((UIWindowScene *)scene).windows) {
+			if (candidate.isKeyWindow) {
+				window = candidate;
+				break;
+			}
+			if (!window && candidate.rootViewController) {
+				window = candidate;
+			}
+		}
+		if (window.isKeyWindow) {
+			break;
+		}
+	}
+
+	UIViewController *controller = window.rootViewController;
+#if VERSION_MAJOR == 4 && VERSION_MINOR >= 6
+	if (!controller) {
+		controller = GDTAppDelegateService.viewController;
+	}
+#else
+	if (!controller) {
+		id<UIApplicationDelegate> delegate = UIApplication.sharedApplication.delegate;
+		if ([delegate respondsToSelector:@selector(window)]) {
+			controller = delegate.window.rootViewController;
+		}
+	}
+#endif
+
+	while (controller.presentedViewController && !controller.presentedViewController.isBeingDismissed) {
+		controller = controller.presentedViewController;
+	}
+	return controller;
+}
+
 void GameCenter::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("authenticate"), &GameCenter::authenticate);
 	ClassDB::bind_method(D_METHOD("is_authenticated"), &GameCenter::is_authenticated);
@@ -88,21 +138,35 @@ Error GameCenter::authenticate() {
 	GKLocalPlayer *player = [GKLocalPlayer localPlayer];
 	ERR_FAIL_COND_V(![player respondsToSelector:@selector(authenticateHandler)], ERR_UNAVAILABLE);
 
-	UIViewController *root_controller = [[UIApplication sharedApplication] delegate].window.rootViewController;
-	ERR_FAIL_COND_V(!root_controller, FAILED);
-
 	// This handler is called several times.  First when the view needs to be shown, then again
 	// after the view is cancelled or the user logs in.  Or if the user's already logged in, it's
 	// called just once to confirm they're authenticated.  This is why no result needs to be specified
 	// in the presentViewController phase. In this case, more calls to this function will follow.
-	_weakify(root_controller);
 	_weakify(player);
 	player.authenticateHandler = (^(UIViewController *controller, NSError *error) {
-		_strongify(root_controller);
 		_strongify(player);
 
 		if (controller) {
-			[root_controller presentViewController:controller animated:YES completion:nil];
+			// Tell the game the sign-in UI is up: the player may take a long time
+			// in it, so any "no answer yet" timeout on the script side must stop.
+			Dictionary ui_event;
+			ui_event["type"] = "authentication_ui";
+			pending_events.push_back(ui_event);
+
+			// Resolved when the sheet is actually needed, not when authenticate()
+			// was called -- the handler can fire much later, e.g. after the app
+			// came back from Settings.
+			UIViewController *root_controller = gamecenter_presenting_controller();
+			if (root_controller) {
+				[root_controller presentViewController:controller animated:YES completion:nil];
+			} else {
+				Dictionary ret;
+				ret["type"] = "authentication";
+				ret["result"] = "error";
+				ret["error_code"] = (int64_t)-3;
+				ret["error_description"] = "No view controller to present the Game Center sign-in from.";
+				pending_events.push_back(ret);
+			}
 		} else {
 			Dictionary ret;
 			ret["type"] = "authentication";
@@ -320,7 +384,7 @@ Error GameCenter::show_game_center(Dictionary p_params) {
 	GKGameCenterViewController *controller = [[GKGameCenterViewController alloc] init];
 	ERR_FAIL_COND_V(!controller, FAILED);
 
-	UIViewController *root_controller = [[UIApplication sharedApplication] delegate].window.rootViewController;
+	UIViewController *root_controller = gamecenter_presenting_controller();
 	ERR_FAIL_COND_V(!root_controller, FAILED);
 
 	controller.gameCenterDelegate = gameCenterDelegate;
